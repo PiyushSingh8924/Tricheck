@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block body %}<div class="panel narrow">
+<div id="step1"><h2>Verify your college email</h2>
+<p class="sub">For accounts made before email sign-in, or if you never confirmed your email. Enter your registration no and password, then the @muj.manipal.edu address to link. We will email you a 6-digit code.</p>
+<input id="reg_no" placeholder="Registration no" autocomplete="username">
+<input id="password" type="password" placeholder="Your password" autocomplete="current-password">
+<input id="email" type="email" placeholder="College email (@muj.manipal.edu)" autocomplete="email" inputmode="email" autocapitalize="none">
+<button onclick="linkEmail()">Email me a code</button></div>
+{% include "_otp.html" %}<p id="msg"></p>
+<p class="links"><a href="/student/login">Back to login</a></p></div>
+{% endblock %}

@@ -34,13 +34,18 @@ small{display:block;color:var(--mute);margin-top:4px}
 .lbl{display:block;font-weight:700;font-size:.9rem;margin:10px 0 0}
 .links{margin:14px 0 0;display:flex;flex-wrap:wrap;gap:6px 18px}
 
-/* home */
-.banner{position:relative;border-radius:28px;overflow:hidden;min-height:clamp(230px,36vw,400px);background:url(/static/muj-campus.jpg) center 38%/cover;border:3px solid #fff;margin-bottom:20px}
-.banner div{position:absolute;left:0;right:0;bottom:0;padding:clamp(18px,3vw,32px);color:#fff;background:linear-gradient(transparent,rgba(8,24,58,.88))}
-.banner h2{font-size:clamp(1.7rem,4.6vw,3rem);font-weight:800}.banner p{margin:4px 0 0;font-weight:600}
-.herocard{margin-bottom:20px}
-.herocard h1{font-size:clamp(2.1rem,5.4vw,4rem);font-weight:800;max-width:17ch}
-.lead{font-size:1.2rem;max-width:46ch;margin:16px 0 0;color:#3a4d78}
+/* home: fixed full-screen campus photo under a dark blue overlay (1600px file normally, 3840px file on wide screens).
+   If the files in static/img are missing, the older campus photo shows instead. */
+body.home::before{background-image:url(/static/img/campus-1600.jpg),url(/static/muj-campus.jpg);background-position:center;filter:none;transform:none}
+@media(min-width:1600px){body.home::before{background-image:url(/static/img/campus-3840.jpg),url(/static/img/campus-1600.jpg),url(/static/muj-campus.jpg)}}
+body.home::after{background:rgba(10,31,68,.72)}
+.herocard{margin:clamp(8px,4vw,48px) 0 28px;color:#fff}
+.kicker{margin:0 0 14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:.85rem;color:#f2c14e}
+.herocard h1{font-size:clamp(2.2rem,5.6vw,4.2rem);font-weight:800;max-width:17ch;color:#fff}
+.lead{font-size:1.2rem;max-width:46ch;margin:16px 0 0;color:#dbe6ff}
+.glass{background:#ffffff1a;border:1px solid #ffffff40;border-radius:28px;padding:clamp(20px,3vw,34px);color:#fff;backdrop-filter:blur(6px)}
+.glass .steps li::before{background:#fff;color:var(--ultra)}
+
 .roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-bottom:20px}
 .role{padding:30px;border-radius:28px;background:#fff;border:2px solid var(--line)}
 .role h2{font-size:1.9rem;margin-bottom:8px}.role p{margin:0 0 22px;max-width:34ch}

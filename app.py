@@ -1,4 +1,5 @@
-import csv, hmac, io, json, math, os, secrets, sqlite3, time
+import csv, hmac, hashlib, io, json, math, os, re, secrets, smtplib, sqlite3, ssl, time
+from email.message import EmailMessage
 from datetime import timedelta
 from functools import wraps
 from flask import Flask, g, jsonify, redirect, render_template, request, session, Response
@@ -17,6 +18,13 @@ if DATABASE_URL.startswith("postgres://"): DATABASE_URL = "postgresql://" + DATA
 PG = DATABASE_URL.startswith("postgresql")                    # hosted Postgres if set, otherwise local SQLite file
 DB = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "attendance.db"))
 MATCH = 0.5  # max face distance to accept
+
+# ---------- college email + one-time codes ----------
+EMAIL_RE = re.compile(r"[a-z0-9._%+-]{1,64}@muj\.manipal\.edu", re.ASCII)   # the domain must match exactly, nothing after it
+OTP_TTL, OTP_TRIES, OTP_GAP = 600, 5, 60                      # code lives 10 min, 5 guesses, 60 s between sends
+SMTP_HOST, SMTP_USER, SMTP_PASS = (os.environ.get(k, "") for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASS"))
+SMTP_PORT = int(os.environ.get("SMTP_PORT") or 587)
+MAIL_FROM = os.environ.get("MAIL_FROM", "")
 
 # ---------- dropdown choices (edit these lists to change what students and teachers can pick) ----------
 DEPARTMENTS = [
@@ -67,7 +75,8 @@ def close(_):
 
 NEW_COLS = [("students", "department", "TEXT"), ("students", "class_name", "TEXT"), ("students", "section", "TEXT"),
             ("sessions", "need_ble", "INTEGER DEFAULT 1"), ("sessions", "department", "TEXT"),
-            ("sessions", "section", "TEXT"), ("sessions", "subject", "TEXT")]
+            ("sessions", "section", "TEXT"), ("sessions", "subject", "TEXT"),
+            ("students", "email", "TEXT"), ("students", "email_verified", "INTEGER DEFAULT 0")]
 
 def init():
     pk, real = ("SERIAL PRIMARY KEY", "DOUBLE PRECISION") if PG else ("INTEGER PRIMARY KEY AUTOINCREMENT", "REAL")
@@ -75,13 +84,17 @@ def init():
         "CREATE TABLE IF NOT EXISTS students(reg_no TEXT PRIMARY KEY, name TEXT, pw TEXT, descriptor TEXT)",
         f"CREATE TABLE IF NOT EXISTS teachers(id {pk}, name TEXT, email TEXT UNIQUE, pw TEXT)",
         f'CREATE TABLE IF NOT EXISTS sessions(id {pk}, teacher_id INTEGER, class_name TEXT, word TEXT, ble_name TEXT, start {real}, "window" INTEGER, active INTEGER DEFAULT 1)',
-        f"CREATE TABLE IF NOT EXISTS attendance(session_id INTEGER, reg_no TEXT, marked_at {real}, UNIQUE(session_id, reg_no))"]
+        f"CREATE TABLE IF NOT EXISTS attendance(session_id INTEGER, reg_no TEXT, marked_at {real}, UNIQUE(session_id, reg_no))",
+        f"CREATE TABLE IF NOT EXISTS email_otps(id {pk}, email TEXT, code_hash TEXT, expires {real}, attempts INTEGER DEFAULT 0, created {real}, ip TEXT)"]
+    after = ["CREATE UNIQUE INDEX IF NOT EXISTS students_email_uq ON students(email)",   # many NULLs are fine; real emails must be unique
+             "CREATE INDEX IF NOT EXISTS otps_email ON email_otps(email)"]
     if PG:
         with pool.connection() as c:
             c.execute("SELECT pg_advisory_lock(42)")          # several workers may start together
             try:
                 for s in stmts: c.execute(s)
                 for t, col, ty in NEW_COLS: c.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {col} {ty}")
+                for q in after: c.execute(q)
             finally: c.execute("SELECT pg_advisory_unlock(42)")
     else:
         with sqlite3.connect(DB, timeout=15) as c:
@@ -90,6 +103,7 @@ def init():
             for t, col, ty in NEW_COLS:
                 if col not in [r[1] for r in c.execute(f"PRAGMA table_info({t})")]:
                     c.execute(f"ALTER TABLE {t} ADD COLUMN {col} {ty}")
+            for q in after: c.execute(q)
 
 def err(m, code=400): return jsonify(ok=False, error=m), code
 def dist(a, b): return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
@@ -148,6 +162,65 @@ def teacher_api(f):
 @app.context_processor
 def choices(): return dict(DEPARTMENTS=DEPARTMENTS, CLASSES=CLASSES, SECTIONS=SECTIONS)
 
+def muj_email(v):
+    """Normalised college address, or None. Exact domain only: lookalikes and extra @ signs fail."""
+    v = v.strip() if isinstance(v, str) else ""
+    if len(v) > 100 or not v.isascii(): return None          # check before lower(): some odd Unicode letters lowercase into plain ASCII
+    v = v.lower()
+    return v if EMAIL_RE.fullmatch(v) else None
+
+def otp_hash(email, code):  # keyed hash: a leaked database alone cannot be used to recover codes
+    return hmac.new(SECRET.encode(), f"{email}:{code}".encode(), hashlib.sha256).hexdigest()
+
+def send_mail(to, subject, body_text):
+    if not (SMTP_HOST and MAIL_FROM): raise RuntimeError("SMTP is not configured")
+    m = EmailMessage(); m["From"], m["To"], m["Subject"] = MAIL_FROM, to, subject; m.set_content(body_text)
+    ctx = ssl.create_default_context()
+    if SMTP_PORT == 465: srv = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15, context=ctx)
+    else: srv = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
+    with srv:
+        if SMTP_PORT != 465: srv.starttls(context=ctx)
+        if SMTP_USER: srv.login(SMTP_USER, SMTP_PASS)
+        srv.send_message(m)
+
+def issue_otp(email):
+    """Create and email a 6-digit code. Returns (error message, http status, soft). soft=True means "a code was sent a moment ago"."""
+    d, now, ip = db(), time.time(), request.remote_addr or "?"
+    count = lambda sql, *a: d.execute(sql, a).fetchone()["n"]
+    d.execute("DELETE FROM email_otps WHERE created < ?", (now - 86400,))
+    if count("SELECT COUNT(*) AS n FROM email_otps WHERE email=? AND created>?", email, now - OTP_TTL) >= 3:
+        return "Too many codes requested for this email. Try again in 10 minutes.", 429, False
+    last = d.execute("SELECT MAX(created) AS t FROM email_otps WHERE email=?", (email,)).fetchone()["t"]
+    if last and now - last < OTP_GAP: return f"Wait {int(OTP_GAP - (now - last)) + 1} seconds before asking for another code.", 429, True
+    if count("SELECT COUNT(*) AS n FROM email_otps WHERE ip=? AND created>?", ip, now - 3600) >= 10:
+        return "Too many requests from your network. Try again later.", 429, False
+    code = f"{secrets.randbelow(10 ** 6):06d}"
+    d.execute("UPDATE email_otps SET expires=0 WHERE email=?", (email,))      # older codes stop working
+    d.execute("INSERT INTO email_otps(email,code_hash,expires,attempts,created,ip) VALUES(?,?,?,?,?,?)",
+              (email, otp_hash(email, code), now + OTP_TTL, 0, now, ip)); d.commit()
+    try: send_mail(email, "Your TriCheck verification code", f"Your TriCheck code is {code}\n\nIt expires in 10 minutes. If you did not ask for it, ignore this email.")
+    except Exception as e:
+        app.logger.error("Could not send verification email (%s)", type(e).__name__)   # never log the code or the SMTP password
+        return "Could not send the email right now. Try again later.", 502, False
+    return None, 200, False
+
+def check_otp(email, code):
+    """None if the code is right (and burns it); otherwise a message for the student."""
+    r = db().execute("SELECT * FROM email_otps WHERE email=? ORDER BY id DESC LIMIT 1", (email,)).fetchone()
+    if not r or r["expires"] < time.time(): return "That code has expired. Ask for a new one."
+    if r["attempts"] >= OTP_TRIES: return "Too many wrong tries. Ask for a new code."
+    db().execute("UPDATE email_otps SET attempts=attempts+1 WHERE id=?", (r["id"],)); db().commit()
+    code = text(code, 10)
+    if not (re.fullmatch(r"\d{6}", code, re.ASCII) and hmac.compare_digest(otp_hash(email, code), r["code_hash"])): return "Wrong code."
+    db().execute("UPDATE email_otps SET expires=0 WHERE email=?", (email,)); db().commit()
+    return None
+
+def me():
+    """The logged-in student, only if their college email is verified."""
+    if "reg_no" not in session: return None
+    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
+    return st if st and st["email_verified"] else None
+
 # ---------- pages ----------
 AUTH = {
     "teacher_register": dict(title="Teacher Registration", api="/api/teacher/register", nxt="/teacher/login", done="Account created. Redirecting to login...",
@@ -164,9 +237,10 @@ AUTH = {
         fields=[("email", "Email", "email"), ("code", "Teacher access code", "password"), ("password", "New password (6+ characters)", "password")],
         links=[("/teacher/login", "Back to login")]),
     "student_login": dict(title="Student Login", api="/api/student/login", nxt="/student/attend", done="Success",
-        blurb="Face, Bluetooth and a word said out loud. That's all it takes.",
-        fields=[("reg_no", "Registration no", "text"), ("password", "Password", "password")],
-        links=[("/student/forgot", "Forgot password?"), ("/student/register", "Register for the first time")]),
+        blurb="Sign in with your college email. Face, Bluetooth and a word said out loud do the rest.",
+        fields=[("email", "College email (@muj.manipal.edu)", "email"), ("password", "Password", "password")],
+        links=[("/student/forgot", "Forgot password?"), ("/student/register", "Register for the first time"),
+               ("/student/verify", "Verify my email / link an older account")]),
 }
 def auth_page(k): return render_template("auth.html", **AUTH[k])
 for k in AUTH:
@@ -178,13 +252,15 @@ def home(): return render_template("home.html")
 @app.get("/student/register")
 def student_register(): return render_template("student_register.html")
 
+@app.get("/student/verify")
+def student_verify(): return render_template("student_verify.html")
+
 @app.get("/student/forgot")
 def student_forgot(): return render_template("student_forgot.html")
 
 @app.get("/student/attend")
 def student_attend():
-    if "reg_no" not in session: return redirect("/student/login")
-    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
+    st = me()
     if not st: session.clear(); return redirect("/student/login")
     return render_template("attend.html", name=st["name"], st=st)
 
@@ -362,25 +438,76 @@ def export(sid):
 # ---------- student API ----------
 @app.post("/api/student/register")
 def s_register():
-    d = body()
+    d = body(); ip = request.remote_addr
     reg, name, pw, desc, g = text(d.get("reg_no"), 30), text(d.get("name")), text(d.get("password"), 200), face_ok(d.get("descriptor")), group(d)
+    email = muj_email(d.get("email"))
+    if not throttle(("s-reg", ip), 20): return err(TOO_MANY, 429)
     if not (reg and name and pw): return err("All fields and a face scan are required")
+    if not email: return err("Use your college email, ending in @muj.manipal.edu")
     if not g: return err("Choose your department, class and section")
     if desc is None: return err("Face scan was not valid - try again")
     if len(pw) < 4: return err("Password must be at least 4 characters")
+    old = db().execute("SELECT email, email_verified FROM students WHERE reg_no=? OR email=?", (reg, email)).fetchall()
+    # a half-finished sign-up (email given, never verified) can be redone; verified accounts and pre-email accounts are protected
+    if any(r["email"] is None or r["email_verified"] for r in old): return err("Already registered. If it is an older account, use 'Verify my email / link an older account' on the login page.")
     try:
-        db().execute("INSERT INTO students(reg_no,name,pw,descriptor,department,class_name,section) VALUES(?,?,?,?,?,?,?)",
-                     (reg, name, gen(pw), json.dumps(desc), *g))
+        db().execute("DELETE FROM students WHERE reg_no=? OR email=?", (reg, email))
+        db().execute("INSERT INTO students(reg_no,name,pw,descriptor,department,class_name,section,email,email_verified) VALUES(?,?,?,?,?,?,?,?,0)",
+                     (reg, name, gen(pw), json.dumps(desc), *g, email))
         db().commit()
     except INTEGRITY:
         return err("Already registered (one-time registration)")
+    msg, code, soft = issue_otp(email)
+    return err(msg, code) if msg and not soft else jsonify(ok=True, email=email)   # soft: the code sent a moment ago still works
+
+@app.post("/api/student/link")
+def s_link():
+    """Older accounts (and unverified ones): prove the password, then verify a college email by code."""
+    d = body(); reg, email = text(d.get("reg_no"), 30), muj_email(d.get("email"))
+    if not (throttle(("s-link-ip", request.remote_addr), 15) and throttle(("s-link", reg), 5)): return err(TOO_MANY, 429)
+    if not email: return err("Use your college email, ending in @muj.manipal.edu")
+    st = db().execute("SELECT * FROM students WHERE reg_no=?", (reg,)).fetchone()
+    if not st or not chk(st["pw"], text(d.get("password"), 200)): return err("Wrong registration no or password", 401)
+    if st["email_verified"]: return err("This account is already verified. Log in with your college email.")
+    other = db().execute("SELECT reg_no, email_verified FROM students WHERE email=? AND reg_no<>?", (email, reg)).fetchone()
+    if other and other["email_verified"]: return err("That email already belongs to another account")
+    try:
+        if other: db().execute("DELETE FROM students WHERE email=? AND reg_no<>? AND email_verified=0", (email, reg))
+        db().execute("UPDATE students SET email=?, email_verified=0 WHERE reg_no=?", (email, reg)); db().commit()
+    except INTEGRITY:
+        return err("That email already belongs to another account")
+    msg, code, soft = issue_otp(email)
+    return err(msg, code) if msg and not soft else jsonify(ok=True, email=email)   # soft: the code sent a moment ago still works
+
+@app.post("/api/student/resend")
+def s_resend():
+    email = muj_email(body().get("email"))
+    if not email: return err("Use your college email, ending in @muj.manipal.edu")
+    if not throttle(("s-resend-ip", request.remote_addr), 20): return err(TOO_MANY, 429)
+    pending = db().execute("SELECT 1 AS x FROM students WHERE email=? AND email_verified=0", (email,)).fetchone()
+    if pending:
+        msg, code, _ = issue_otp(email)
+        if msg: return err(msg, code)
+    return jsonify(ok=True)       # same answer whether or not the address is registered
+
+@app.post("/api/student/verify")
+def s_verify():
+    email = muj_email(body().get("email"))
+    if not email: return err("Use your college email, ending in @muj.manipal.edu")
+    if not throttle(("s-verify", request.remote_addr), 30): return err(TOO_MANY, 429)
+    bad = check_otp(email, body().get("code"))
+    if bad: return err(bad)
+    db().execute("UPDATE students SET email_verified=1 WHERE email=?", (email,)); db().commit()
     return jsonify(ok=True)
 
 @app.post("/api/student/login")
 def s_login():
-    d = body()
-    s = db().execute("SELECT * FROM students WHERE reg_no=?", (text(d.get("reg_no"), 30),)).fetchone()
-    if not s or not chk(s["pw"], text(d.get("password"), 200)): return err("Wrong registration no or password", 401)
+    d = body(); email = muj_email(d.get("email"))
+    if not email: return err("Use your college email, ending in @muj.manipal.edu", 401)
+    if not (throttle(("s-login", request.remote_addr, email), 10) and throttle(("s-login-ip", request.remote_addr), 60)): return err(TOO_MANY, 429)
+    s = db().execute("SELECT * FROM students WHERE email=?", (email,)).fetchone()
+    if not s or not chk(s["pw"], text(d.get("password"), 200)): return err("Wrong email or password", 401)
+    if not s["email_verified"]: return jsonify(ok=False, error="Verify your email first (link on this page)", need_verify=True), 403
     session.clear(); session.permanent = True; session.update(reg_no=s["reg_no"], name=s["name"])
     return jsonify(ok=True)
 
@@ -403,17 +530,14 @@ def mine_only(st, act):
 
 @app.get("/api/session")
 def current():
-    if "reg_no" not in session: return jsonify(sessions=[])
-    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
+    st = me()
     if not st: return jsonify(sessions=[])
     return jsonify(sessions=[dict(class_name=s["class_name"], subject=s["subject"] or "", ble_name=s["ble_name"], need_ble=s["need_ble"] != 0,
                    remaining=int(s["start"] + s["window"] - time.time())) for s in mine_only(st, actives())])
 
 @app.post("/api/attend")
 def attend():
-    if "reg_no" not in session: return err("Please log in", 401)
-    d = body()
-    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
+    d = body(); st = me()
     if not st: session.clear(); return err("Please log in", 401)
     act = mine_only(st, actives())
     if not act: return err("No active session for your class")

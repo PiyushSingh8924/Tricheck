@@ -1,0 +1,7 @@
+{# Step 2 of registration / email verification: type the 6-digit code that was emailed #}
+<div id="otpbox" hidden>
+<h2>Check your email</h2>
+<p class="sub">We sent a 6-digit code to <b id="otpmail"></b>. It works for 10 minutes. Check spam if you can't see it.</p>
+<input id="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code" aria-label="6-digit code">
+<button onclick="verifyCode()">Verify email</button><button class="alt" id="resend" onclick="resendCode()" disabled>Resend code</button>
+</div>

@@ -2,11 +2,13 @@
 {% block libs %}<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.js"></script>{% endblock %}
 {% block body %}<div class="duo">
 <div class="camcol"><div class="scan"><video id="cam" autoplay muted playsinline></video><i></i><i></i><i></i><i></i><b class="sweep"></b><span class="camchip" id="camchip">Starting camera...</span></div></div>
-<div class="panel"><h2>Create your student account</h2>
-<p class="sub">You register once. Only a numeric face signature is saved, not your photo. Use good light and face the camera.</p>
+<div class="panel"><div id="step1"><h2>Create your student account</h2>
+<p class="sub">You register once. Only a numeric face signature is saved, not your photo. Use good light and face the camera. We will email a code to your college address to confirm it is yours.</p>
 <input id="reg_no" placeholder="Registration no" autocomplete="username"><input id="name" placeholder="Full name" autocomplete="name">
+<input id="email" type="email" placeholder="College email (@muj.manipal.edu)" autocomplete="email" inputmode="email" autocapitalize="none">
 {{ picker() }}
 <input id="password" type="password" placeholder="Password" autocomplete="new-password">
-<button id="go" onclick="registerStudent()">Scan face and register</button><p id="msg"></p>
+<button id="go" onclick="registerStudent()">Scan face and register</button></div>
+{% include "_otp.html" %}<p id="msg"></p>
 <p class="links"><a href="/student/login">Already registered? Log in</a></p></div></div>
 {% endblock %}
