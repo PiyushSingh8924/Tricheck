@@ -55,7 +55,7 @@ const registerStudent = () => scanning(async () => {
   const pick = id => $(id).value;
   const r = await post("/api/student/register", {reg_no: pick("reg_no"), name: pick("name"), email: pick("email"), department: pick("department"),
     class_name: pick("class_name"), section: pick("section"), password: pick("password"), descriptor: await face()});
-  if (r.ok) showOtp(r.email); else say(r.error, false);
+  if (r.ok) { say("Registered! Redirecting to login...", true); setTimeout(() => location = "/student/login", 1200); } else say(r.error, false);
 });
 const resetStudent = () => scanning(async () => {
   const r = await post("/api/student/reset", {reg_no: $("reg_no").value, password: $("password").value, descriptor: await face()});
@@ -81,23 +81,3 @@ const mark = () => scanning(async () => {
   const r = await post("/api/attend", {word: $("word").value, ble_name: bleName, descriptor: await face()});
   say(r.ok ? `Attendance marked for ${r.name}` : r.error, r.ok);
 });
-
-// email code step (register + verify pages)
-let otpEmail = "", resendTimer;
-function showOtp(email) {
-  otpEmail = email; $("step1").hidden = true; $("otpbox").hidden = false; $("otpmail").textContent = email;
-  say("Code sent. Check your college inbox.", true); $("code").focus(); cooldown(60);
-}
-function cooldown(n) {
-  const b = $("resend"); clearInterval(resendTimer); b.disabled = true; b.textContent = `Resend in ${n}s`;
-  resendTimer = setInterval(() => { n--; if (n <= 0) { clearInterval(resendTimer); b.disabled = false; b.textContent = "Resend code"; } else b.textContent = `Resend in ${n}s`; }, 1000);
-}
-async function verifyCode() {
-  const r = await post("/api/student/verify", {email: otpEmail, code: $("code").value});
-  if (r.ok) { say("Email verified! Redirecting to login...", true); setTimeout(() => location = "/student/login", 1200); } else say(r.error, false);
-}
-async function resendCode() { const r = await post("/api/student/resend", {email: otpEmail}); say(r.ok ? "New code sent" : r.error, r.ok); if (r.ok) cooldown(60); }
-async function linkEmail() {
-  const r = await post("/api/student/link", {reg_no: $("reg_no").value, password: $("password").value, email: $("email").value});
-  if (r.ok) showOtp(r.email); else say(r.error, false);
-}
