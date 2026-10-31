@@ -14,9 +14,9 @@ def db(sql, *a):
 c = cl("10.0.0.1")
 def E(r): return f"{r}@muj.manipal.edu"
 def reg(client, r, name, pw, seed, sec="B", dept=None, cls="Semester 3"):
-    out = J(client.post("/api/student/register", json=dict(reg_no=r, name=name, email=E(r.lower()), password=pw, descriptor=vec(seed), department=dept or A.DEPARTMENTS[0], class_name=cls, section=sec)))
+    out = J(client.post("/api/student/register", json=dict(reg_no=r, name=name, password=pw, descriptor=vec(seed), department=dept or A.DEPARTMENTS[0], class_name=cls, section=sec)))
     return out
-def login(client, r, pw): return J(client.post("/api/student/login", json=dict(email=E(r.lower()), password=pw)))
+def login(client, r, pw): return J(client.post("/api/student/login", json=dict(reg_no=r, password=pw)))
 def J(r): return r.get_json()
 def check(name, cond, extra=""): print(("PASS " if cond else "FAIL ") + name, extra if not cond else ""); 
 vec = lambda s: [random.Random(s).uniform(-.2,.2) for _ in range(128)]
@@ -33,7 +33,7 @@ check("register page has dropdowns", b'id="department"' in c.get("/student/regis
 check("S1 register+verify", reg(cl("10.0.1.1"), "S1", "Asha", "pass1", 1)["ok"])
 check("S2 register+verify", reg(cl("10.0.1.2"), "S2", "Ravi", "pass2", 2)["ok"])
 check("S3 other section", reg(cl("10.0.1.3"), "S3", "Meena", "pass3", 3, sec="C")["ok"])
-check("bad dept rejected", not J(cl("10.0.1.4").post("/api/student/register", json=dict(reg_no="S9", name="X", email=E("s9"), password="pass1", descriptor=vec(9), department="Hacking", class_name=CL, section=S)))["ok"])
+check("bad dept rejected", not J(cl("10.0.1.4").post("/api/student/register", json=dict(reg_no="S9", name="X", password="pass1", descriptor=vec(9), department="Hacking", class_name=CL, section=S)))["ok"])
 
 # teacher register / login
 check("teacher register wrong code", not J(c.post("/api/teacher/register", json=dict(name="T", email="t@muj.manipal.edu", password="tpass12", code="no")))["ok"])
@@ -55,8 +55,8 @@ check("reset brute force throttled (429)", last.status_code == 429, last.status_
 # ---- student forgot password (face) ----
 r = J(c.post("/api/student/reset", json=dict(reg_no="S1", password="fresh1", descriptor=vec(2)))); check("student reset wrong face rejected", not r["ok"], r)
 r = J(c.post("/api/student/reset", json=dict(reg_no="S1", password="fresh1", descriptor=vec(1)))); check("student reset right face ok", r["ok"], r)
-check("student old pw dead", not J(c.post("/api/student/login", json=dict(email=E("s1"), password="pass1")))["ok"])
-check("student new pw works", J(c.post("/api/student/login", json=dict(email=E("s1"), password="fresh1")))["ok"])
+check("student old pw dead", not J(c.post("/api/student/login", json=dict(reg_no="S1", password="pass1")))["ok"])
+check("student new pw works", J(c.post("/api/student/login", json=dict(reg_no="S1", password="fresh1")))["ok"])
 c.get("/logout")
 
 # ---- teacher dashboard ----
@@ -68,8 +68,8 @@ check("start ok", J(c.post("/api/session/start", json=dict(word="Tiger", subject
 l = J(c.get("/api/live")); check("live: expected=2 (same section only)", l["expected"] == 2 and len(l["absent"]) == 2 and l["live"], l)
 
 # students: S1 (same class) sees it, S3 (other section) does not
-s1 = app_c = A.app.test_client(); s1.post("/api/student/login", json=dict(email=E("s1"), password="fresh1"))
-s3 = A.app.test_client(); s3.post("/api/student/login", json=dict(email=E("s3"), password="pass3"))
+s1 = app_c = A.app.test_client(); s1.post("/api/student/login", json=dict(reg_no="S1", password="fresh1"))
+s3 = A.app.test_client(); s3.post("/api/student/login", json=dict(reg_no="S3", password="pass3"))
 check("S1 sees session", len(J(s1.get("/api/session"))["sessions"]) == 1)
 check("S3 sees none", len(J(s3.get("/api/session"))["sessions"]) == 0)
 r = J(s3.post("/api/attend", json=dict(word="tiger", descriptor=vec(3)))); check("S3 cannot attend", not r["ok"], r)
@@ -102,12 +102,12 @@ check("S1 sees none after end", len(J(s1.get("/api/session"))["sessions"]) == 0)
 
 
 print("---- college email (no email codes) ----")
-def S(email, r="N1"): return J(cl("10.9.9.9").post("/api/student/register", json=dict(reg_no=r, name="N", email=email, password="pass1234", descriptor=vec(7), department=A.DEPARTMENTS[0], class_name="Semester 3", section="B")))
-check("student gmail rejected", not S("n1@gmail.com")["ok"])
-check("student lookalike rejected", not S("n1@muj.manipal.edu.evil.com")["ok"] and not S("a@b@muj.manipal.edu")["ok"])
-check("student register is instant, email lower-cased", S("N1@MUJ.manipal.edu")["ok"])
-check("student can log in straight away", login(cl("10.9.9.8"), "n1", "pass1234")["ok"])
-check("same email cannot register twice", not S("n1@muj.manipal.edu", "N2")["ok"])
+def S(r="N1"): return J(cl("10.9.9.9").post("/api/student/register", json=dict(reg_no=r, name="N", password="pass1234", descriptor=vec(7), department=A.DEPARTMENTS[0], class_name="Semester 3", section="B")))
+check("student register needs no email", S()["ok"])
+check("student can log in with reg no only", login(cl("10.9.9.8"), "N1", "pass1234")["ok"])
+check("same reg no cannot register twice", not S()["ok"])
+check("student cannot log in with email any more", not J(cl("10.9.9.6").post("/api/student/login", json=dict(email=E("n1"), password="pass1234")))["ok"])
+check("department list matches the university list", len(A.DEPARTMENTS) == 31 and "Hotel Management" in A.DEPARTMENTS and "Psychology" in A.DEPARTMENTS)
 t = lambda e, code="muj-secret": J(cl("10.9.9.7").post("/api/teacher/register", json=dict(name="T", email=e, password="tpass12", code=code)))
 check("teacher gmail rejected", not t("x@gmail.com")["ok"])
 check("teacher needs the teacher code", not t("tt@muj.manipal.edu", "")["ok"] and not t("tt@muj.manipal.edu", "bad")["ok"])

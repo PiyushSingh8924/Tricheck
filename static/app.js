@@ -53,7 +53,7 @@ async function scanning(fn) {
 }
 const registerStudent = () => scanning(async () => {
   const pick = id => $(id).value;
-  const r = await post("/api/student/register", {reg_no: pick("reg_no"), name: pick("name"), email: pick("email"), department: pick("department"),
+  const r = await post("/api/student/register", {reg_no: pick("reg_no"), name: pick("name"), department: pick("department"),
     class_name: pick("class_name"), section: pick("section"), password: pick("password"), descriptor: await face()});
   if (r.ok) { say("Registered! Redirecting to login...", true); setTimeout(() => location = "/student/login", 1200); } else say(r.error, false);
 });

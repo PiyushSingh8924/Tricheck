@@ -24,11 +24,36 @@ STUDENT_DOMAINS, TEACHER_DOMAINS = ("muj.manipal.edu",), ("muj.manipal.edu", "ja
 
 # ---------- dropdown choices (edit these lists to change what students and teachers can pick) ----------
 DEPARTMENTS = [
-    "Computer Science & Engineering", "Information Technology", "Artificial Intelligence & Data Science",
-    "Electronics & Communication Engineering", "Electrical & Electronics Engineering", "Mechanical Engineering",
-    "Civil Engineering", "Chemical Engineering", "Automobile Engineering", "Mechatronics Engineering",
-    "Architecture & Planning", "Biotechnology", "Basic Sciences", "Computer Applications (BCA / MCA)",
-    "Management (BBA / MBA)", "Commerce", "Law", "Design", "Journalism & Mass Communication", "Humanities & Social Sciences"]
+    # FoSTA - School of Computer Science and Engineering
+    "Computer Science and Engineering", "Information Technology", "Artificial Intelligence and Machine Learning",
+    "IoT and Intelligent Systems", "Computer and Communication Engineering", "Data Science and Engineering", "Computer Applications",
+    # FoSTA - School of Engineering
+    "Biotechnology and Chemical Engineering", "Civil Engineering", "Mechanical Engineering", "Mechatronics Engineering",
+    "Electrical Engineering", "Electronics and Communication Engineering",
+    # FoSTA - School of Architecture and Design
+    "Architecture", "Fashion Design", "Interior Design", "Interaction and Communication Design",
+    # FoSTA - School of Physical and Biological Sciences
+    "Biosciences", "Chemistry", "Mathematics and Statistics", "Physics",
+    # FoMCA - School of Arts / TAPMI School of Business
+    "Liberal Arts and Social Sciences", "Media Communication and Fine Arts",
+    "Management", "Business Administration", "Commerce", "Economics", "Hotel Management",
+    # FoL / FoHS
+    "Law", "Pharmaceutical Sciences", "Psychology"]
+# old dropdown values -> new ones, so students registered earlier still match their sessions
+LEGACY_DEPARTMENTS = {
+    "Computer Science & Engineering": "Computer Science and Engineering",
+    "Artificial Intelligence & Data Science": "Artificial Intelligence and Machine Learning",
+    "Electronics & Communication Engineering": "Electronics and Communication Engineering",
+    "Electrical & Electronics Engineering": "Electrical Engineering",
+    "Chemical Engineering": "Biotechnology and Chemical Engineering",
+    "Biotechnology": "Biotechnology and Chemical Engineering",
+    "Architecture & Planning": "Architecture",
+    "Computer Applications (BCA / MCA)": "Computer Applications",
+    "Management (BBA / MBA)": "Management",
+    "Journalism & Mass Communication": "Media Communication and Fine Arts",
+    "Humanities & Social Sciences": "Liberal Arts and Social Sciences",
+    "Design": "Interaction and Communication Design",
+    "Basic Sciences": "Mathematics and Statistics"}
 CLASSES = [f"Semester {i}" for i in range(1, 11)]
 SECTIONS = list("ABCDEFGHIJKL")
 
@@ -89,6 +114,8 @@ def init():
                 for s in stmts: c.execute(s)
                 for t, col, ty in NEW_COLS: c.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {col} {ty}")
                 for q in after: c.execute(q)
+                for old, new in LEGACY_DEPARTMENTS.items():
+                    for t in ("students", "sessions"): c.execute(f"UPDATE {t} SET department=%s WHERE department=%s", (new, old))
             finally: c.execute("SELECT pg_advisory_unlock(42)")
     else:
         with sqlite3.connect(DB, timeout=15) as c:
@@ -98,6 +125,8 @@ def init():
                 if col not in [r[1] for r in c.execute(f"PRAGMA table_info({t})")]:
                     c.execute(f"ALTER TABLE {t} ADD COLUMN {col} {ty}")
             for q in after: c.execute(q)
+            for old, new in LEGACY_DEPARTMENTS.items():
+                for t in ("students", "sessions"): c.execute(f"UPDATE {t} SET department=? WHERE department=?", (new, old))
 
 def err(m, code=400): return jsonify(ok=False, error=m), code
 def dist(a, b): return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
@@ -184,8 +213,8 @@ AUTH = {
         fields=[("email", "Email", "email"), ("code", "Teacher access code", "password"), ("password", "New password (6+ characters)", "password")],
         links=[("/teacher/login", "Back to login")]),
     "student_login": dict(title="Student Login", api="/api/student/login", nxt="/student/attend", done="Success",
-        blurb="Sign in with your college email. Face, Bluetooth and a word said out loud do the rest.",
-        fields=[("email", "College email (@muj.manipal.edu)", "email"), ("password", "Password", "password")],
+        blurb="Sign in with your registration no. Face, Bluetooth and a word said out loud do the rest.",
+        fields=[("reg_no", "Registration no", "text"), ("password", "Password", "password")],
         links=[("/student/forgot", "Forgot password?"), ("/student/register", "Register for the first time")]),
 }
 def auth_page(k): return render_template("auth.html", **AUTH[k])
@@ -387,17 +416,15 @@ def export(sid):
 def s_register():
     d = body(); ip = request.remote_addr
     reg, name, pw, desc, g = text(d.get("reg_no"), 30), text(d.get("name")), text(d.get("password"), 200), face_ok(d.get("descriptor")), group(d)
-    email = muj_email(d.get("email"))
     if not throttle(("s-reg", ip), 20): return err(TOO_MANY, 429)
     if not (reg and name and pw): return err("All fields and a face scan are required")
-    if not email: return err("Use your college email, ending in @muj.manipal.edu")
     if not g: return err("Choose your department, class and section")
     if desc is None: return err("Face scan was not valid - try again")
     if len(pw) < 4: return err("Password must be at least 4 characters")
-    if db().execute("SELECT 1 AS x FROM students WHERE reg_no=? OR email=?", (reg, email)).fetchone(): return err("Already registered. Log in with your college email.")
+    if db().execute("SELECT 1 AS x FROM students WHERE reg_no=?", (reg,)).fetchone(): return err("Already registered. Log in with your registration no.")
     try:
-        db().execute("INSERT INTO students(reg_no,name,pw,descriptor,department,class_name,section,email,email_verified) VALUES(?,?,?,?,?,?,?,?,1)",
-                     (reg, name, gen(pw), json.dumps(desc), *g, email))
+        db().execute("INSERT INTO students(reg_no,name,pw,descriptor,department,class_name,section) VALUES(?,?,?,?,?,?,?)",
+                     (reg, name, gen(pw), json.dumps(desc), *g))
         db().commit()
     except INTEGRITY:
         return err("Already registered (one-time registration)")
@@ -405,11 +432,11 @@ def s_register():
 
 @app.post("/api/student/login")
 def s_login():
-    d = body(); email = muj_email(d.get("email"))
-    if not email: return err("Use your college email, ending in @muj.manipal.edu", 401)
-    if not (throttle(("s-login", request.remote_addr, email), 10) and throttle(("s-login-ip", request.remote_addr), 60)): return err(TOO_MANY, 429)
-    s = db().execute("SELECT * FROM students WHERE email=?", (email,)).fetchone()
-    if not s or not chk(s["pw"], text(d.get("password"), 200)): return err("Wrong email or password", 401)
+    d = body(); reg = text(d.get("reg_no"), 30)
+    if not reg: return err("Enter your registration no", 401)
+    if not (throttle(("s-login", request.remote_addr, reg.lower()), 10) and throttle(("s-login-ip", request.remote_addr), 60)): return err(TOO_MANY, 429)
+    s = db().execute("SELECT * FROM students WHERE reg_no=?", (reg,)).fetchone()
+    if not s or not chk(s["pw"], text(d.get("password"), 200)): return err("Wrong registration no or password", 401)
     session.clear(); session.permanent = True; session.update(reg_no=s["reg_no"], name=s["name"])
     return jsonify(ok=True)
 
