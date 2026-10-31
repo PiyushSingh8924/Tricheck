@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block body %}
+<div class="authbox"><div class="authside"><svg><use href="#lg"/></svg>
+<div><h2>{{ title }}</h2><p>Face, Bluetooth and a word said out loud. That's all it takes.</p></div></div>
+<div class="authform"><form id="auth" data-api="{{ api }}" data-next="{{ nxt }}">
+{% for n, label, t in fields %}<input name="{{ n }}" type="{{ t }}" placeholder="{{ label }}" required>{% endfor %}
+<button>{{ title }}</button></form><p id="msg"></p><a href="/">Back to home</a></div></div>
+{% endblock %}

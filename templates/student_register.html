@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block libs %}<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.js"></script>{% endblock %}
+{% block body %}<div class="duo">
+<div><div class="scan"><video id="cam" autoplay muted playsinline></video><i></i><i></i><i></i><i></i><b class="sweep"></b></div>
+<small>Good light, face the camera, hold still for a second.</small></div>
+<div class="panel"><h2>Create your student account</h2>
+<p class="sub">You register once. Only a numeric face signature is saved, not your photo.</p>
+<input id="reg_no" placeholder="Registration no"><input id="name" placeholder="Full name">
+<input id="password" type="password" placeholder="Password">
+<button onclick="registerStudent()">Scan face and register</button><p id="msg"></p>
+<a href="/student/login">Already registered? Log in</a></div></div>
+{% endblock %}

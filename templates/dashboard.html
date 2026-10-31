@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block right %}{{ name }}<a href="/logout">Log out</a>{% endblock %}
+{% block body %}<div class="duo">
+<div class="panel"><h2>Start a session</h2><p class="sub">Students have the time window below to check in.</p>
+<input id="class_name" placeholder="Class name"><input id="ble_name" placeholder="Bluetooth name of your device">
+<input id="word" placeholder="Word or number to say in class"><input id="win" type="number" value="300" placeholder="Time window in seconds">
+<label class="chk"><input id="need_ble" type="checkbox" checked> Require Bluetooth proximity (untick for iPhones / Safari)</label>
+<button onclick="startSession()">Start session</button><button class="alt" onclick="endSession()">End session</button>
+<p id="msg"></p></div>
+<div class="panel"><p id="status">No session yet</p>
+<div class="count" id="count">0</div><p class="sub">students present</p>
+<button class="alt" onclick="csv()">Download CSV</button>
+<table><thead><tr><th>Reg no</th><th>Name</th><th>Time</th></tr></thead><tbody id="live"></tbody></table></div></div>
+{% endblock %}

@@ -1,0 +1,12 @@
+# never upload these
+.venv/
+venv/
+flask_project/
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+.env
+*.zip
+.vscode/

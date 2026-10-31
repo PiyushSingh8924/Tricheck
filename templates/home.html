@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block body %}
+<section class="hero"><h1>Attendance that only counts when you're in the room.</h1>
+<p class="lead">Your face, your teacher's Bluetooth, and a word said out loud in class. Three quick checks, about ten seconds.</p></section>
+<section class="roles">
+<article class="role student"><h2>I'm a student</h2><p>Register your face once, then mark attendance in every class.</p>
+<a class="btn" href="/student/login">Mark attendance</a><a class="btn ghost" href="/student/register">Register for the first time</a></article>
+<article class="role"><h2>I'm a teacher</h2><p>Start a session, say the word, and watch students check in live.</p>
+<a class="btn" href="/teacher/login">Log in</a><a class="btn ghost" href="/teacher/register">Create an account</a></article>
+</section>
+<ol class="steps flow">
+<li><div><b>Connect</b>Find your teacher's Bluetooth. It proves you're in the room.</div></li>
+<li><div><b>Say the word</b>Type the word or number your teacher announces.</div></li>
+<li><div><b>Scan your face</b>One look at the camera and you're marked present.</div></li>
+</ol>{% endblock %}
