@@ -4,9 +4,9 @@
 <title>Face Attendance | Manipal University Jaipur</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Figtree:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css"></head>
+<link rel="icon" href="/static/logo.png"><link rel="stylesheet" href="/static/style.css"></head>
 <body class="{% block bodyclass %}{% endblock %}" data-page="{{ page or '' }}"{% block bodyattrs %}{% endblock %}>
 <svg width="0" height="0" style="position:absolute"><symbol id="lg" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M4 11V6a2 2 0 0 1 2-2h5M21 4h5a2 2 0 0 1 2 2v5M28 21v5a2 2 0 0 1-2 2h-5M11 28H6a2 2 0 0 1-2-2v-5"/><circle cx="16" cy="14" r="3.2"/><path d="M10 23c1.2-3 3.4-4 6-4s4.8 1 6 4"/></symbol></svg>
-<header><a href="/"><svg class="logo"><use href="#lg"/></svg><div class="brand"><h1>Face Attendance</h1><small>Manipal University Jaipur</small></div></a><span>{% block right %}{% endblock %}</span></header>
+<header><a href="/"><img class="muj-logo" src="/static/logo.png" alt="Manipal University Jaipur logo" hidden onload="this.hidden=false;this.nextElementSibling.style.display='none'"><svg class="logo"><use href="#lg"/></svg><div class="brand"><h1>Face Attendance</h1><small>Manipal University Jaipur</small></div></a><span>{% block right %}{% endblock %}</span></header>
 <main>{% block body %}{% endblock %}</main>
 {% block libs %}{% endblock %}<script src="/static/app.js"></script>{% block scripts %}{% endblock %}</body></html>

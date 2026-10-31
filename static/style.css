@@ -4,9 +4,8 @@ html{-webkit-text-size-adjust:100%}
 body{margin:0;min-height:100vh;min-height:100dvh;font:500 16px/1.55 Figtree,system-ui,sans-serif;color:var(--ink);background:#9fc2ec}
 
 /* Manipal University Jaipur campus as the page background */
-body::before{content:"";position:fixed;inset:0;z-index:-2;background:url(/static/muj-campus.jpg) center 30%/cover no-repeat;filter:blur(2px);transform:scale(1.04)}
-body::after{content:"";position:fixed;inset:0;z-index:-1;background:linear-gradient(rgba(8,24,58,.08),rgba(8,24,58,.32))}
-body.home::before{filter:blur(6px)}
+body::before{content:"";position:fixed;inset:0;z-index:-2;background:url(/static/muj-campus.jpg) center 30%/cover no-repeat}
+body::after{content:"";position:fixed;inset:0;z-index:-1;background:rgba(8,24,58,.18)}
 
 h1,h2{font-family:"Bricolage Grotesque",system-ui,sans-serif;line-height:1.05;margin:0;letter-spacing:-.02em}
 a{color:var(--ultra);font-weight:600}
@@ -15,6 +14,7 @@ header>a{display:flex;align-items:center;gap:10px;color:var(--ink);text-decorati
 .brand h1{font-size:1.25rem;font-weight:800;line-height:1.05;white-space:nowrap}
 .brand small{margin:0;font-size:.78rem;font-weight:700;color:#b87d00;line-height:1.2}
 .logo{width:36px;height:36px;color:var(--ultra);flex:none}
+.muj-logo{height:44px;width:auto;max-width:120px;object-fit:contain;flex:none}
 header span{display:flex;align-items:center;gap:10px;font-weight:600;font-size:.95rem;min-width:0}header span a{flex:none;white-space:nowrap}
 .who{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 main{max-width:1120px;margin:0 auto;padding:clamp(18px,3.5vw,40px) clamp(14px,4vw,40px) 64px}
