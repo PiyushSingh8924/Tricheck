@@ -1,0 +1,11 @@
+{% extends "teacher_base.html" %}
+{% block bodyattrs %} data-sid="{{ sid }}"{% endblock %}
+{% block tbody %}
+<section class="panel"><div class="rowhead"><div><p id="status">Loading...</p><h2 id="title">&nbsp;</h2><p class="sub" id="meta"></p></div>
+<div class="actions"><a class="btn alt-link" href="/teacher/history">Back to history</a><a class="btn" href="/api/csv/{{ sid }}">Download CSV</a></div></div>
+<div class="stats small"><div class="stat"><b id="count">0</b><span>Present</span></div><div class="stat"><b id="left">0</b><span>Absent</span></div><div class="stat"><b id="pct">-</b><span>Attendance</span></div></div></section>
+<div class="duo even">
+<section class="panel"><h2>Present</h2><div class="tablewrap"><table><thead><tr><th>Reg no</th><th>Name</th><th>Time</th></tr></thead><tbody id="live"></tbody></table></div></section>
+<section class="panel"><h2>Absent</h2><div class="tablewrap"><table><thead><tr><th>Reg no</th><th>Name</th></tr></thead><tbody id="absent"></tbody></table></div></section>
+</div>
+{% endblock %}

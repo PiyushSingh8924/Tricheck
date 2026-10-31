@@ -1,0 +1,6 @@
+{# Department / class / section dropdowns. prefix keeps ids unique; any_opt adds an "All" choice for filters. #}
+{% macro picker(prefix="", any_opt=False) %}
+<select id="{{ prefix }}department" aria-label="Department">{% if any_opt %}<option value="">All departments</option>{% else %}<option value="" disabled selected>Select department</option>{% endif %}{% for d in DEPARTMENTS %}<option>{{ d }}</option>{% endfor %}</select>
+<select id="{{ prefix }}class_name" aria-label="Class">{% if any_opt %}<option value="">All classes</option>{% else %}<option value="" disabled selected>Select class</option>{% endif %}{% for c in CLASSES %}<option>{{ c }}</option>{% endfor %}</select>
+<select id="{{ prefix }}section" aria-label="Section">{% if any_opt %}<option value="">All sections</option>{% else %}<option value="" disabled selected>Select section</option>{% endif %}{% for s in SECTIONS %}<option value="{{ s }}">Section {{ s }}</option>{% endfor %}</select>
+{% endmacro %}

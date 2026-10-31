@@ -1,0 +1,12 @@
+{% extends "teacher_base.html" %}{% from "_macros.html" import picker with context %}
+{% block tbody %}
+<div class="panel narrow"><h2>Start a session</h2><p class="sub">Only students of the class you pick can mark attendance. They have the time window below to check in.</p>
+{{ picker() }}
+<input id="subject" placeholder="Subject or topic (optional)" maxlength="80">
+<input id="word" placeholder="Word or number to say in class" autocomplete="off">
+<label class="lbl" for="win">Time window (seconds)</label><input id="win" type="number" min="30" max="3600" value="300">
+<label class="chk"><input id="need_ble" type="checkbox" checked> Require Bluetooth proximity (untick for iPhones / Safari)</label>
+<input id="ble_name" placeholder="Bluetooth name of your device" autocomplete="off">
+<button onclick="startSession()">Start session</button>
+<p id="msg"></p></div>
+{% endblock %}

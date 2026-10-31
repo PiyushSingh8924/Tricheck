@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block bodyclass %}teacher{% endblock %}
+{% block right %}<b class="who">{{ name }}</b><a href="/logout">Log out</a>{% endblock %}
+{% block body %}
+<nav class="tnav" aria-label="Teacher dashboard">
+{% for key, href, label in [("overview", "/teacher/dashboard", "Overview"), ("new", "/teacher/session/new", "Start session"), ("live", "/teacher/live", "Live session"), ("history", "/teacher/history", "History"), ("students", "/teacher/students", "Students")] %}<a href="{{ href }}"{% if page == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+</nav>
+{% block tbody %}{% endblock %}
+{% endblock %}
+{% block scripts %}<script src="/static/teacher.js"></script>{% endblock %}

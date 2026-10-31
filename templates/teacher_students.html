@@ -1,0 +1,6 @@
+{% extends "teacher_base.html" %}{% from "_macros.html" import picker with context %}
+{% block tbody %}
+<section class="panel"><h2>Students</h2><p class="sub">Attendance is counted across the sessions you have held for each student's class. Students below 75% are flagged.</p>
+<div class="filters">{{ picker("f_", True) }}<input id="f_q" type="search" placeholder="Search name or reg no" aria-label="Search students"></div>
+<div class="tablewrap"><table><thead><tr><th>Reg no</th><th>Name</th><th>Class</th><th>Attended</th><th>Percent</th></tr></thead><tbody id="stu"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table></div></section>
+{% endblock %}

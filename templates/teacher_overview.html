@@ -1,0 +1,12 @@
+{% extends "teacher_base.html" %}
+{% block tbody %}
+<section class="stats">
+<div class="stat"><b id="s_held">-</b><span>Sessions held</span></div>
+<div class="stat"><b id="s_today">-</b><span>Sessions today</span></div>
+<div class="stat"><b id="s_students">-</b><span>Students in your classes</span></div>
+<div class="stat"><b id="s_avg">-</b><span>Average attendance</span></div>
+</section>
+<section class="panel"><div class="rowhead"><h2>Recent sessions</h2><a class="btn alt-link" href="/teacher/session/new">Start a session</a></div>
+<div class="tablewrap"><table><thead><tr><th>When</th><th>Subject</th><th>Class</th><th>Present</th><th></th></tr></thead><tbody id="recent"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table></div>
+<p class="links"><a href="/teacher/history">See all sessions</a></p></section>
+{% endblock %}

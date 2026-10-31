@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block libs %}<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.js"></script>{% endblock %}
+{% block body %}<div class="duo">
+<div class="camcol"><div class="scan"><video id="cam" autoplay muted playsinline></video><i></i><i></i><i></i><i></i><b class="sweep"></b><span class="camchip" id="camchip">Starting camera...</span></div></div>
+<div class="panel"><h2>Reset your password</h2>
+<p class="sub">Enter your registration no and a new password, then scan your face. It must match the face you registered with.</p>
+<input id="reg_no" placeholder="Registration no" autocomplete="username">
+<input id="password" type="password" placeholder="New password (4+ characters)" autocomplete="new-password">
+<button id="go" onclick="resetStudent()">Scan face and change password</button><p id="msg"></p>
+<p class="links"><a href="/student/login">Back to login</a></p></div></div>
+{% endblock %}

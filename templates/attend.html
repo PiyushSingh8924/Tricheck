@@ -1,13 +1,15 @@
 {% extends "base.html" %}
-{% block right %}{{ name }}<a href="/logout">Log out</a>{% endblock %}
+{% block bodyclass %}attend toast{% endblock %}
+{% block right %}<b class="who">{{ name }}</b><a href="/logout">Log out</a>{% endblock %}
 {% block libs %}<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.js"></script>{% endblock %}
 {% block body %}<div class="duo">
-<div class="scan"><video id="cam" autoplay muted playsinline></video><i></i><i></i><i></i><i></i><b class="sweep"></b></div>
-<div class="panel"><h2>Mark attendance</h2><p class="sub">Do these three in order while the session is open.</p>
+<div class="camcol"><div class="scan"><video id="cam" autoplay muted playsinline></video><i></i><i></i><i></i><i></i><b class="sweep"></b><span class="camchip" id="camchip">Starting camera...</span></div></div>
+<div class="panel"><h2>Mark attendance</h2>
+<p class="sub">{% if st["department"] %}{{ st["department"] }}, {{ st["class_name"] }}, Section {{ st["section"] }}{% else %}Do these in order while the session is open.{% endif %}</p>
 <p id="status">No active session</p>
 <ol class="steps">
 <li id="ble-step"><div><b>Find your teacher's Bluetooth</b>Proves you're in the room.<br><button class="alt" onclick="pairBle()">Find Bluetooth</button><small id="ble">Not connected yet</small></div></li>
-<li><div><b>Enter the word</b>Your teacher says it out loud.<input id="word" placeholder="Word or number"></div></li>
-<li><div><b>Scan your face</b>Hold still and look at the camera.<br><button onclick="mark()">Mark attendance</button></div></li>
-</ol><p id="msg"></p></div></div>
+<li><div><b>Enter the word</b>Your teacher says it out loud.<input id="word" placeholder="Word or number" autocomplete="off" autocapitalize="none" enterkeyhint="done"></div></li>
+<li><div><b>Scan your face</b>Hold still and look at the camera above.<br><button id="go" onclick="mark()">Mark attendance</button></div></li>
+</ol><p id="msg" role="status"></p></div></div>
 {% endblock %}

@@ -1,5 +1,6 @@
 import csv, hmac, io, json, math, os, secrets, sqlite3, time
 from datetime import timedelta
+from functools import wraps
 from flask import Flask, g, jsonify, redirect, render_template, request, session, Response
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash as gen, check_password_hash as chk
@@ -16,6 +17,16 @@ if DATABASE_URL.startswith("postgres://"): DATABASE_URL = "postgresql://" + DATA
 PG = DATABASE_URL.startswith("postgresql")                    # hosted Postgres if set, otherwise local SQLite file
 DB = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "attendance.db"))
 MATCH = 0.5  # max face distance to accept
+
+# ---------- dropdown choices (edit these lists to change what students and teachers can pick) ----------
+DEPARTMENTS = [
+    "Computer Science & Engineering", "Information Technology", "Artificial Intelligence & Data Science",
+    "Electronics & Communication Engineering", "Electrical & Electronics Engineering", "Mechanical Engineering",
+    "Civil Engineering", "Chemical Engineering", "Automobile Engineering", "Mechatronics Engineering",
+    "Architecture & Planning", "Biotechnology", "Basic Sciences", "Computer Applications (BCA / MCA)",
+    "Management (BBA / MBA)", "Commerce", "Law", "Design", "Journalism & Mass Communication", "Humanities & Social Sciences"]
+CLASSES = [f"Semester {i}" for i in range(1, 11)]
+SECTIONS = list("ABCDEFGHIJKL")
 
 app = Flask(__name__)
 app.secret_key = SECRET
@@ -54,6 +65,10 @@ def close(_):
         if PG: pool.putconn(d.raw)
         else: d.raw.close()
 
+NEW_COLS = [("students", "department", "TEXT"), ("students", "class_name", "TEXT"), ("students", "section", "TEXT"),
+            ("sessions", "need_ble", "INTEGER DEFAULT 1"), ("sessions", "department", "TEXT"),
+            ("sessions", "section", "TEXT"), ("sessions", "subject", "TEXT")]
+
 def init():
     pk, real = ("SERIAL PRIMARY KEY", "DOUBLE PRECISION") if PG else ("INTEGER PRIMARY KEY AUTOINCREMENT", "REAL")
     stmts = [
@@ -66,14 +81,15 @@ def init():
             c.execute("SELECT pg_advisory_lock(42)")          # several workers may start together
             try:
                 for s in stmts: c.execute(s)
-                c.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS need_ble INTEGER DEFAULT 1")
+                for t, col, ty in NEW_COLS: c.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {col} {ty}")
             finally: c.execute("SELECT pg_advisory_unlock(42)")
     else:
         with sqlite3.connect(DB, timeout=15) as c:
             c.execute("PRAGMA journal_mode=WAL")               # readers and the one writer no longer block each other
             for s in stmts: c.execute(s)
-            if "need_ble" not in [r[1] for r in c.execute("PRAGMA table_info(sessions)")]:
-                c.execute("ALTER TABLE sessions ADD COLUMN need_ble INTEGER DEFAULT 1")
+            for t, col, ty in NEW_COLS:
+                if col not in [r[1] for r in c.execute(f"PRAGMA table_info({t})")]:
+                    c.execute(f"ALTER TABLE {t} ADD COLUMN {col} {ty}")
 
 def err(m, code=400): return jsonify(ok=False, error=m), code
 def dist(a, b): return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
@@ -98,16 +114,61 @@ def oops(_):
 @app.get("/healthz")
 def healthz(): return "ok"
 
+# ---------- small helpers ----------
+def group(d):
+    """(department, class, section) picked from the dropdowns; None if any value is not in the allowed lists."""
+    g = (text(d.get("department")), text(d.get("class_name")), text(d.get("section")))
+    return g if g[0] in DEPARTMENTS and g[1] in CLASSES and g[2] in SECTIONS else None
+
+_tries = {}
+def throttle(key, limit=5, per=600):
+    """Allow `limit` attempts per `per` seconds for a key (kept in memory, per worker). Stops password guessing."""
+    now = time.time(); hits = [t for t in _tries.get(key, []) if now - t < per]
+    ok = len(hits) < limit
+    if ok: hits.append(now)
+    _tries[key] = hits
+    if len(_tries) > 5000: _tries.clear()
+    return ok
+TOO_MANY = "Too many attempts - wait 10 minutes and try again"
+
+def teacher_page(f):
+    @wraps(f)
+    def w(*a, **k):
+        if "tid" not in session: return redirect("/teacher/login")
+        return f(*a, **k)
+    return w
+
+def teacher_api(f):
+    @wraps(f)
+    def w(*a, **k):
+        if "tid" not in session: return err("Please log in", 401)
+        return f(*a, **k)
+    return w
+
+@app.context_processor
+def choices(): return dict(DEPARTMENTS=DEPARTMENTS, CLASSES=CLASSES, SECTIONS=SECTIONS)
+
 # ---------- pages ----------
-AUTH = {  # key: (title, fields, api, next page)
-    "teacher_register": ("Teacher Registration", [("name", "Full name", "text"), ("email", "Email", "email"), ("password", "Password", "password")]
-                         + ([("code", "Teacher access code", "password")] if TEACHER_CODE else []), "/api/teacher/register", "/teacher/login"),
-    "teacher_login": ("Teacher Login", [("email", "Email", "email"), ("password", "Password", "password")], "/api/teacher/login", "/teacher/dashboard"),
-    "student_login": ("Student Login", [("reg_no", "Registration no", "text"), ("password", "Password", "password")], "/api/student/login", "/student/attend"),
+AUTH = {
+    "teacher_register": dict(title="Teacher Registration", api="/api/teacher/register", nxt="/teacher/login", done="Account created. Redirecting to login...",
+        blurb="Create your teacher account to start sessions and see who attended.",
+        fields=[("name", "Full name", "text"), ("email", "Email", "email"), ("password", "Password", "password")]
+               + ([("code", "Teacher access code", "password")] if TEACHER_CODE else []),
+        links=[("/teacher/login", "Already have an account? Log in")]),
+    "teacher_login": dict(title="Teacher Login", api="/api/teacher/login", nxt="/teacher/dashboard", done="Success",
+        blurb="Face, Bluetooth and a word said out loud. That's all it takes.",
+        fields=[("email", "Email", "email"), ("password", "Password", "password")],
+        links=[("/teacher/forgot", "Forgot password?"), ("/teacher/register", "Create an account")]),
+    "teacher_forgot": dict(title="Reset Teacher Password", api="/api/teacher/reset", nxt="/teacher/login", done="Password changed. Redirecting to login...",
+        blurb="Enter your email and the teacher access code to choose a new password.",
+        fields=[("email", "Email", "email"), ("code", "Teacher access code", "password"), ("password", "New password (6+ characters)", "password")],
+        links=[("/teacher/login", "Back to login")]),
+    "student_login": dict(title="Student Login", api="/api/student/login", nxt="/student/attend", done="Success",
+        blurb="Face, Bluetooth and a word said out loud. That's all it takes.",
+        fields=[("reg_no", "Registration no", "text"), ("password", "Password", "password")],
+        links=[("/student/forgot", "Forgot password?"), ("/student/register", "Register for the first time")]),
 }
-def auth_page(k):
-    t, f, api, nxt = AUTH[k]
-    return render_template("auth.html", title=t, fields=f, api=api, nxt=nxt)
+def auth_page(k): return render_template("auth.html", **AUTH[k])
 for k in AUTH:
     app.add_url_rule("/" + k.replace("_", "/"), k, lambda k=k: auth_page(k))
 
@@ -117,21 +178,34 @@ def home(): return render_template("home.html")
 @app.get("/student/register")
 def student_register(): return render_template("student_register.html")
 
+@app.get("/student/forgot")
+def student_forgot(): return render_template("student_forgot.html")
+
 @app.get("/student/attend")
 def student_attend():
     if "reg_no" not in session: return redirect("/student/login")
-    return render_template("attend.html", name=session["name"])
+    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
+    if not st: session.clear(); return redirect("/student/login")
+    return render_template("attend.html", name=st["name"], st=st)
 
-@app.get("/teacher/dashboard")
-def dashboard():
-    if "tid" not in session: return redirect("/teacher/login")
-    return render_template("dashboard.html", name=session["tname"])
+# teacher pages: each one is its own screen, all behind login
+TPAGES = {"/teacher/dashboard": ("teacher_overview.html", "overview"), "/teacher/session/new": ("teacher_new.html", "new"),
+          "/teacher/live": ("teacher_live.html", "live"), "/teacher/history": ("teacher_history.html", "history"),
+          "/teacher/students": ("teacher_students.html", "students")}
+for path, (tpl, key) in TPAGES.items():
+    app.add_url_rule(path, "page_" + key, teacher_page(lambda tpl=tpl, key=key: render_template(tpl, name=session["tname"], page=key)))
+
+@app.get("/teacher/session/<int:sid>")
+@teacher_page
+def t_session_page(sid):
+    if not owned(sid): return redirect("/teacher/history")
+    return render_template("teacher_session.html", name=session["tname"], page="history", sid=sid)
 
 @app.get("/logout")
 def logout():
     session.clear(); return redirect("/")
 
-# ---------- teacher API ----------
+# ---------- teacher account ----------
 @app.post("/api/teacher/register")
 def t_register():
     d = body()
@@ -152,64 +226,151 @@ def t_login():
     session.clear(); session.permanent = True; session.update(tid=t["id"], tname=t["name"])
     return jsonify(ok=True)
 
-@app.post("/api/session/start")
-def start():
-    if "tid" not in session: return err("Please log in", 401)
-    d = body()
-    cls, word, ble = text(d.get("class_name")), text(d.get("word")).lower(), text(d.get("ble_name"))
-    need = 0 if d.get("need_ble") in (False, 0, "0", "false") else 1
-    try: win = max(30, min(int(d.get("window") or 300), 3600))
-    except (TypeError, ValueError): return err("Time window must be a number of seconds")
-    if not cls or not word: return err("Class name and word are required")
-    if need and not ble: return err("Enter the Bluetooth name, or untick 'Require Bluetooth'")
-    db().execute("UPDATE sessions SET active=0 WHERE teacher_id=?", (session["tid"],))
-    db().execute('INSERT INTO sessions(teacher_id,class_name,word,ble_name,start,"window",need_ble) VALUES(?,?,?,?,?,?,?)',
-                 (session["tid"], cls, word, ble, time.time(), win, need))
-    db().commit()
+@app.post("/api/teacher/reset")
+def t_reset():
+    """Forgot password: the private teacher access code proves the person is a teacher."""
+    d = body(); email, pw = text(d.get("email")).lower(), text(d.get("password"), 200)
+    if not TEACHER_CODE: return err("Password reset is not set up. Ask the admin to set TEACHER_CODE.", 503)
+    if not (throttle(("t-ip", request.remote_addr), 15) and throttle(("t-acct", email))): return err(TOO_MANY, 429)
+    if len(pw) < 6: return err("New password must be at least 6 characters")
+    t = db().execute("SELECT id FROM teachers WHERE email=?", (email,)).fetchone()
+    if not t or not hmac.compare_digest(text(d.get("code")).encode(), TEACHER_CODE.encode()): return err("Email or teacher access code is wrong", 403)
+    db().execute("UPDATE teachers SET pw=? WHERE id=?", (gen(pw), t["id"])); db().commit()
     return jsonify(ok=True)
 
-@app.post("/api/session/end")
-def end():
-    if "tid" not in session: return err("Please log in", 401)
-    db().execute("UPDATE sessions SET active=0 WHERE teacher_id=?", (session["tid"],)); db().commit()
-    return jsonify(ok=True)
+# ---------- teacher sessions ----------
+def owned(sid):
+    return db().execute("SELECT * FROM sessions WHERE id=? AND teacher_id=?", (sid, session.get("tid"))).fetchone()
+
+def roster(s):
+    """Registered students who belong to the session's department / class / section."""
+    if not s["department"]: return []
+    return db().execute("SELECT reg_no, name FROM students WHERE department=? AND class_name=? AND section=? ORDER BY reg_no",
+                        (s["department"], s["class_name"], s["section"])).fetchall()
 
 def rows(sid):
     return db().execute("""SELECT a.reg_no, s.name, a.marked_at FROM attendance a
         JOIN students s ON s.reg_no=a.reg_no WHERE a.session_id=? ORDER BY a.marked_at""", (sid,)).fetchall()
 
-@app.get("/api/live")
-def live():
-    if "tid" not in session: return err("Please log in", 401)
-    s = db().execute("SELECT * FROM sessions WHERE teacher_id=? ORDER BY id DESC LIMIT 1", (session["tid"],)).fetchone()
-    if not s: return jsonify(id=None, rows=[])
+def absent(s, present):
+    here = {r["reg_no"] for r in present}
+    return [dict(r) for r in roster(s) if r["reg_no"] not in here]
+
+def info(s):
     left = max(0, int(s["start"] + s["window"] - time.time()))
-    return jsonify(id=s["id"], class_name=s["class_name"], active=bool(s["active"]) and left > 0,
-                   remaining=left, rows=[dict(r) for r in rows(s["id"])])
+    return dict(id=s["id"], subject=s["subject"] or "", department=s["department"] or "", class_name=s["class_name"] or "",
+                section=s["section"] or "", start=s["start"], live=bool(s["active"]) and left > 0, remaining=left)
+
+@app.post("/api/session/start")
+@teacher_api
+def start():
+    d = body(); g = group(d)
+    word, ble, subject = text(d.get("word")).lower(), text(d.get("ble_name")), text(d.get("subject"))
+    need = 0 if d.get("need_ble") in (False, 0, "0", "false") else 1
+    try: win = max(30, min(int(d.get("window") or 300), 3600))
+    except (TypeError, ValueError): return err("Time window must be a number of seconds")
+    if not g: return err("Choose the department, class and section")
+    if not word: return err("Enter the word or number to say in class")
+    if need and not ble: return err("Enter the Bluetooth name, or untick 'Require Bluetooth'")
+    db().execute("UPDATE sessions SET active=0 WHERE teacher_id=?", (session["tid"],))
+    db().execute('INSERT INTO sessions(teacher_id,department,class_name,section,subject,word,ble_name,start,"window",need_ble) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                 (session["tid"], g[0], g[1], g[2], subject, word, ble, time.time(), win, need))
+    db().commit()
+    return jsonify(ok=True)
+
+@app.post("/api/session/end")
+@teacher_api
+def end():
+    db().execute("UPDATE sessions SET active=0 WHERE teacher_id=?", (session["tid"],)); db().commit()
+    return jsonify(ok=True)
+
+@app.get("/api/live")
+@teacher_api
+def live():
+    s = db().execute("SELECT * FROM sessions WHERE teacher_id=? ORDER BY id DESC LIMIT 1", (session["tid"],)).fetchone()
+    if not s: return jsonify(id=None)
+    present = rows(s["id"]); out = info(s)
+    return jsonify(**out, rows=[dict(r) for r in present], absent=absent(s, present), expected=len(roster(s)))
+
+@app.get("/api/teacher/session/<int:sid>")
+@teacher_api
+def t_session(sid):
+    s = owned(sid)
+    if not s: return err("Not allowed", 403)
+    present = rows(sid)
+    return jsonify(**info(s), rows=[dict(r) for r in present], absent=absent(s, present), expected=len(roster(s)))
+
+COUNTS = """(SELECT COUNT(*) FROM attendance a WHERE a.session_id=se.id) AS present,
+ (SELECT COUNT(*) FROM students st WHERE st.department=se.department AND st.class_name=se.class_name AND st.section=se.section) AS expected"""
+
+def listing(limit, d):
+    """This teacher's sessions, newest first, optionally narrowed by department / class / section / subject text."""
+    sql, args = f"SELECT se.*, {COUNTS} FROM sessions se WHERE se.teacher_id=?", [session["tid"]]
+    for col in ("department", "class_name", "section"):
+        if text(d.get(col)): sql += f" AND se.{col}=?"; args.append(text(d.get(col)))
+    if text(d.get("q")): sql += " AND se.subject LIKE ?"; args.append("%" + text(d.get("q")) + "%")
+    return [dict(info(s), present=s["present"], expected=s["expected"])
+            for s in db().execute(sql + f" ORDER BY se.id DESC LIMIT {int(limit)}", args).fetchall()]
+
+@app.get("/api/teacher/history")
+@teacher_api
+def t_history(): return jsonify(sessions=listing(200, request.args))
+
+@app.get("/api/teacher/overview")
+@teacher_api
+def t_overview():
+    tid = session["tid"]; one = lambda sql, *a: db().execute(sql, a).fetchone()["n"]
+    midnight = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+    mine = "FROM sessions se JOIN students st ON st.department=se.department AND st.class_name=se.class_name AND st.section=se.section WHERE se.teacher_id=?"
+    held = one("SELECT COUNT(*) AS n FROM sessions WHERE teacher_id=?", tid)
+    checkins = one("SELECT COUNT(*) AS n FROM attendance a JOIN sessions se ON se.id=a.session_id WHERE se.teacher_id=?", tid)
+    expected = one(f"SELECT COUNT(*) AS n {mine}", tid)
+    return jsonify(held=held, today=one("SELECT COUNT(*) AS n FROM sessions WHERE teacher_id=? AND start>=?", tid, midnight),
+                   checkins=checkins, students=one(f"SELECT COUNT(DISTINCT st.reg_no) AS n {mine}", tid),
+                   average=min(100, round(100 * checkins / expected)) if expected else None, recent=listing(6, {}))
+
+@app.get("/api/teacher/students")
+@teacher_api
+def t_students():
+    """Registered students with how many of this teacher's sessions (for their class) they attended."""
+    same = "se.teacher_id=? AND se.department=st.department AND se.class_name=st.class_name AND se.section=st.section"
+    sql, args = f"""SELECT st.reg_no, st.name, st.department, st.class_name, st.section,
+        (SELECT COUNT(*) FROM sessions se WHERE {same}) AS total,
+        (SELECT COUNT(*) FROM attendance a JOIN sessions se ON se.id=a.session_id WHERE a.reg_no=st.reg_no AND {same}) AS attended
+        FROM students st WHERE 1=1""", [session["tid"], session["tid"]]
+    for col in ("department", "class_name", "section"):
+        if text(request.args.get(col)): sql += f" AND st.{col}=?"; args.append(text(request.args.get(col)))
+    q = text(request.args.get("q"))
+    if q: sql += " AND (st.name LIKE ? OR st.reg_no LIKE ?)"; args += ["%" + q + "%"] * 2
+    return jsonify(students=[dict(r) for r in db().execute(sql + " ORDER BY st.reg_no LIMIT 500", args).fetchall()])
 
 def safe(v):  # stop spreadsheet programs treating a name as a formula
     v = str(v); return "'" + v if v[:1] in "=+-@" else v
 
 @app.get("/api/csv/<int:sid>")
 def export(sid):
-    s = db().execute("SELECT * FROM sessions WHERE id=? AND teacher_id=?", (sid, session.get("tid"))).fetchone()
+    s = owned(sid)
     if not s: return err("Not allowed", 403)
+    present = rows(sid)
     out = io.StringIO(); w = csv.writer(out)
-    w.writerow(["Registration No", "Name", "Time"])
-    for r in rows(sid):
-        w.writerow([safe(r["reg_no"]), safe(r["name"]), time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["marked_at"]))])
+    w.writerow(["Registration No", "Name", "Status", "Time"])
+    for r in present:
+        w.writerow([safe(r["reg_no"]), safe(r["name"]), "Present", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["marked_at"]))])
+    for r in absent(s, present): w.writerow([safe(r["reg_no"]), safe(r["name"]), "Absent", ""])
     return Response(out.getvalue(), mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename=attendance_{sid}.csv"})
 
 # ---------- student API ----------
 @app.post("/api/student/register")
 def s_register():
     d = body()
-    reg, name, pw, desc = text(d.get("reg_no"), 30), text(d.get("name")), text(d.get("password"), 200), face_ok(d.get("descriptor"))
+    reg, name, pw, desc, g = text(d.get("reg_no"), 30), text(d.get("name")), text(d.get("password"), 200), face_ok(d.get("descriptor")), group(d)
     if not (reg and name and pw): return err("All fields and a face scan are required")
+    if not g: return err("Choose your department, class and section")
     if desc is None: return err("Face scan was not valid - try again")
     if len(pw) < 4: return err("Password must be at least 4 characters")
     try:
-        db().execute("INSERT INTO students VALUES(?,?,?,?)", (reg, name, gen(pw), json.dumps(desc)))
+        db().execute("INSERT INTO students(reg_no,name,pw,descriptor,department,class_name,section) VALUES(?,?,?,?,?,?,?)",
+                     (reg, name, gen(pw), json.dumps(desc), *g))
         db().commit()
     except INTEGRITY:
         return err("Already registered (one-time registration)")
@@ -223,21 +384,42 @@ def s_login():
     session.clear(); session.permanent = True; session.update(reg_no=s["reg_no"], name=s["name"])
     return jsonify(ok=True)
 
+@app.post("/api/student/reset")
+def s_reset():
+    """Forgot password: the student's own face (matched against the one saved at registration) proves who they are."""
+    d = body(); reg, pw, desc = text(d.get("reg_no"), 30), text(d.get("password"), 200), face_ok(d.get("descriptor"))
+    if not (throttle(("s-ip", request.remote_addr), 15) and throttle(("s-acct", reg))): return err(TOO_MANY, 429)
+    if not reg or len(pw) < 4: return err("Enter your registration no and a new password of at least 4 characters")
+    if desc is None: return err("Face scan was not valid - try again")
+    st = db().execute("SELECT * FROM students WHERE reg_no=?", (reg,)).fetchone()
+    if not st or dist(json.loads(st["descriptor"]), desc) > MATCH: return err("Registration no not found or face did not match", 403)
+    db().execute("UPDATE students SET pw=? WHERE reg_no=?", (gen(pw), reg)); db().commit()
+    return jsonify(ok=True)
+
+def mine_only(st, act):
+    """A student only sees sessions for their own department / class / section."""
+    if not st["department"]: return list(act)           # accounts made before these dropdowns existed
+    return [s for s in act if (s["department"], s["class_name"], s["section"]) == (st["department"], st["class_name"], st["section"])]
+
 @app.get("/api/session")
 def current():
-    return jsonify(sessions=[dict(class_name=s["class_name"], ble_name=s["ble_name"], need_ble=s["need_ble"] != 0,
-                   remaining=int(s["start"] + s["window"] - time.time())) for s in actives()])
+    if "reg_no" not in session: return jsonify(sessions=[])
+    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
+    if not st: return jsonify(sessions=[])
+    return jsonify(sessions=[dict(class_name=s["class_name"], subject=s["subject"] or "", ble_name=s["ble_name"], need_ble=s["need_ble"] != 0,
+                   remaining=int(s["start"] + s["window"] - time.time())) for s in mine_only(st, actives())])
 
 @app.post("/api/attend")
 def attend():
     if "reg_no" not in session: return err("Please log in", 401)
-    d = body(); act = actives()
-    if not act: return err("No active session")
+    d = body()
+    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
+    if not st: session.clear(); return err("Please log in", 401)
+    act = mine_only(st, actives())
+    if not act: return err("No active session for your class")
     ble = text(d.get("ble_name"))
     s = next((x for x in act if x["need_ble"] == 0 or (ble and ble.startswith(x["ble_name"]))), None)
     if not s: return err("Teacher's Bluetooth not in range")
-    st = db().execute("SELECT * FROM students WHERE reg_no=?", (session["reg_no"],)).fetchone()
-    if not st: session.clear(); return err("Please log in", 401)
     desc = face_ok(d.get("descriptor"))
     if desc is None: return err("Face scan was not valid - try again")
     if dist(json.loads(st["descriptor"]), desc) > MATCH: return err("Face did not match")

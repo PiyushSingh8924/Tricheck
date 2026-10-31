@@ -1,0 +1,6 @@
+{% extends "teacher_base.html" %}{% from "_macros.html" import picker with context %}
+{% block tbody %}
+<section class="panel"><h2>Past sessions</h2><p class="sub">Open a session to see who was present and who was absent.</p>
+<div class="filters">{{ picker("f_", True) }}<input id="f_q" type="search" placeholder="Search subject" aria-label="Search subject"></div>
+<div class="tablewrap"><table><thead><tr><th>When</th><th>Subject</th><th>Class</th><th>Present</th><th></th></tr></thead><tbody id="hist"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table></div></section>
+{% endblock %}
